@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Authenticator</title>
+<style>
+:root{--bg:#f6f7fb;--card:#fff;--tx:#14161f;--mut:#6b7080;--ac:#3b5bfd;--bd:#e3e5ee;--dn:#e5484d;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1117;--card:#1a1d27;--tx:#f0f2f8;--mut:#9399ad;--ac:#7b92ff;--bd:#2a2e3d;--dn:#ff6b70}}
+:root[data-theme="dark"]{--bg:#0f1117;--card:#1a1d27;--tx:#f0f2f8;--mut:#9399ad;--ac:#7b92ff;--bd:#2a2e3d;--dn:#ff6b70}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:480px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:8px 0 14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:12px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.name{font-size:14px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.code{font-size:34px;font-weight:700;letter-spacing:4px;font-variant-numeric:tabular-nums;cursor:pointer;margin:6px 0}
+.bar{height:5px;background:var(--bd);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ac);transition:width .25s linear}
+.bar.low i{background:var(--dn)}
+input{width:100%;padding:12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font-size:16px;margin-bottom:8px}
+button{padding:12px 16px;border:0;border-radius:10px;background:var(--ac);color:#fff;font-size:16px;font-weight:600;width:100%}
+.x{background:none;color:var(--dn);width:auto;padding:4px 8px;font-size:14px;font-weight:500}
+.hint{font-size:13px;color:var(--mut);margin:8px 0 0;line-height:1.4}
+.empty{text-align:center;color:var(--mut);padding:24px 0}
+</style>
+</head>
+<body>
+<main>
+<h1>Authenticator</h1>
+<div id="list"></div>
+<div class="card">
+<input id="nm" placeholder="Name (e.g. Roblox, Gmail)" autocomplete="off">
+<input id="sk" placeholder="Secret key or otpauth:// link" autocomplete="off" autocapitalize="characters">
+<button id="add">Add account</button>
+<p class="hint">In the app or site you want to connect (Roblox, Gmail, Facebook), choose authenticator app 2FA, then copy the setup key (or "Can’t scan QR code") and paste it here. It will generate a 6-digit code every 30 seconds, even without load or data.</p>
+</div>
+</main>
+<script>
+const KEY='auth_accounts_v1';
+let acc=[];
+try{acc=JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){acc=[]}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(acc))}catch(e){}}
+function b32(s){const A='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';s=s.replace(/[\s=-]/g,'').toUpperCase();let bits='';
+for(const c of s){const i=A.indexOf(c);if(i<0)throw 0;bits+=i.toString(2).padStart(5,'0')}
+const b=[];for(let i=0;i+8<=bits.length;i+=8)b.push(parseInt(bits.slice(i,i+8),2));return new Uint8Array(b)}
+async function totp(secret){
+const raw=b32(secret),c=Math.floor(Date.now()/30000);
+const buf=new ArrayBuffer(8),v=new DataView(buf);v.setUint32(0,Math.floor(c/4294967296));v.setUint32(4,c>>>0);
+const k=await crypto.subtle.importKey('raw',raw,{name:'HMAC',hash:'SHA-1'},false,['sign']);
+const h=new Uint8Array(await crypto.subtle.sign('HMAC',k,buf));
+const o=h[19]&15,n=((h[o]&127)<<24|h[o+1]<<16|h[o+2]<<8|h[o+3])%1000000;
+const s=String(n).padStart(6,'0');return s.slice(0,3)+' '+s.slice(3)}
+function esc(t){return t.replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))}
+async function render(){
+const l=document.getElementById('list');
+if(!acc.length){l.innerHTML='<div class="empty">No accounts yet. Add one below.</div>';return}
+const left=30-Math.floor(Date.now()/1000)%30;
+let h='';
+for(let i=0;i<acc.length;i++){let c='ERROR';try{c=await totp(acc[i].s)}catch(e){}
+h+='<div class="card"><div class="row"><span class="name">'+esc(acc[i].n)+'</span><button class="x" data-d="'+i+'">Delete</button></div>'+
+'<div class="code" data-c="'+c+'">'+c+'</div><div class="bar'+(left<=5?' low':'')+'"><i style="width:'+(left/30*100)+'%"></i></div></div>'}
+l.innerHTML=h}
+document.getElementById('list').addEventListener('click',e=>{
+const d=e.target.dataset.d;
+if(d!==undefined){if(confirm('Delete this account? Make sure you have a backup of the secret key.')){acc.splice(+d,1);save();render()}return}
+const c=e.target.closest('.code');
+if(c&&navigator.clipboard){navigator.clipboard.writeText(c.dataset.c.replace(' ','')).catch(()=>{})}});
+document.getElementById('add').onclick=()=>{
+let n=document.getElementById('nm').value.trim(),s=document.getElementById('sk').value.trim();
+if(s.startsWith('otpauth://')){try{const u=new URL(s);s=u.searchParams.get('secret')||'';
+if(!n)n=decodeURIComponent(u.pathname.replace(/^\/+/,''))||'Account'}catch(e){}}
+if(!n||!s){alert('Enter a name and a secret key.');return}
+try{b32(s)}catch(e){alert('Invalid secret key. Only letters A-Z and digits 2-7 are valid.');return}
+acc.push({n,s});save();document.getElementById('nm').value='';document.getElementById('sk').value='';render()};
+render();setInterval(render,1000);
+</script>
+</body>
+</html>
